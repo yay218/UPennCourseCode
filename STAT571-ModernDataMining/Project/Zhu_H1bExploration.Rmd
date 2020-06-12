@@ -1,0 +1,833 @@
+---
+title: "STAT 571 Final Project: Exploration of H1B Candidates for Compensation, Career, and Approval"
+author: "Yifan Jiang, Yang Yi, Kexin Zhu"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+  html_document:
+    code_folding: show
+    highlight: haddock
+    theme: lumen
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+---
+
+\pagebreak
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 6, fig.height = 4, fig.align = 'center')
+if(!require("pacman")) install.packages("pacman")
+pacman::p_load(dplyr, ggplot2, glmnet, car, data.table,ISLR, leaps, usmap, car, tidyverse, GGally, reshape2,randomForest, tree,  rpart, rattle, pROC, partykit,tm,wordcloud,RColorBrewer)   #add your packages here
+```
+
+```{r echo=FALSE, include=FALSE}
+data <- fread("H-1B_Disclosure_Data_FY2019.csv", stringsAsFactors = FALSE)
+```
+
+# Executive Summary
+
+Today, with rising demand for high-tech professionals, more and more companies are willing to sponsor H1B working visa for foreign employees to obtain legal status of residence. Given the fact that the United States has boasted a large number of top high-tech and internet companies throughout the world, international students are dreaming of working for these brilliant organizations and to the largest extent train their expertise. As such, it is reasonable for prospective individuals to care about the expected salary they would receive and whether they can be accepted by the H1B program. Moreover, the application process for the H1B program is troublesome and full of uncertainty. Thus, a clearer understanding of related information and what to expect may largely help international students to make future plans in advance. As potential candidates who will be experiencing this process, we decided to look deeply into the H1B disclosure data from the United States Department of Labor (See more on: https://www.foreignlaborcert.doleta.gov/performancedata.cfm), which provides information of each H1B applicants in terms of levels of income, job titles, application status, worksite state, etc., to find some insights about the factors of receiving high salaries, including the corresponding job titles and employers. By analyzing these data, we figure out that most international students and foreign professionals have a very decent annual compensation, with the average of 90 thousands dollars, which is much higher than the average compensation level across the United States. We also find out that workers who have been promoted to principals, senior levels, and managers should have a relatively high salary, while jobs such as accountant, assistant and associate are more likely to be  correlated with lower levels of compensation. We predict that the most important factor for the approval of H1B, based on our analysis, is the annual salary.
+
+# H1B Data Anaylsis
+## Introduction
+
+As an immigrant country, the United States has long been welcoming talents from all over the world to obtain self-development or realize their dreams, and accordingly, the H1B program has been carried out to retain skilled labor in high-tech industries. The H1B program allows companies in the United States to temporarily employ foreign workers in occupations that require the theoretical and practical application of a body of highly specialized knowledge and a bachelor's degree or higher in the specific specialty. Simply put, H1B Visa is a temporary working visa officially given to aliens with specialized capabilities to work and live in the United States. H1B is extremely important for foreign employees because this is equivalent to their immigrant status within the States. Their working permission, in other words, is not fully controlled by the employers solely but also partially by the government.
+
+The dataset we will be using is this public disclosure file from the Department’s Office of Foreign Labor Certification, Employment and Training Administration, by which this file contains administrative data from employer petitions for prevailing wage determinations (ETA Form 9141) processed (The dataset could be fully retrieved from: https://www.foreignlaborcert.doleta.gov/pdf/PerformanceData/2019/H-1B_Disclosure_Data_FY2019.xlsx). This file records the information with date of either the initial prevailing wage determination or redetermination was issued on or after October 1, 2018, and on or before December 31, 2018. All data were extracted from the Office of Foreign Labor Certification’s iCERT Visa Portal System, an electronic filing and application processing system of employer requests for prevailing wage determinations (Information retrieved from the record layout).
+
+In this project, Our goal is to analyze the important factors and identify the keywords of job title which employers are able to get sponsored, receive higher salaries, and get H1B Visa approved. With respect to the methodology, we use regressions featuring LASSO selection, classification methods including random forest and neural network, and text mining tools in our study. The overall result of our experiment shows that we can to a large extent predict the salary, precisely capture popular job titles to get sponsored, and whether the of H1B Visa will be approved.
+
+Since all these data are from previous cases, we could thus build models to predict future conditions using previous bases. Our analysis is mainly composed of three parts: first, we do some basic cleaning for the dataset. Specifically, we exclude some irrelevant or unnecessary features from the dataset and regularize some data from the original data, and choose the possible risk factors to predict. Second, we try building predicting models with respect to compensations for foreign employees; finally, we explore the keywords for occupations and employers that most welcome aliens.
+
+
+## Data Cleaning and Explanatory Analysis
+
+Our preliminary data (`H-1B_Disclosure_Data_FY2019.csv`) is composed of 97572 observations with 52 variables, based on which we conducted a cleaning process and engineered some variables to ease the coding burden.
+
+```{r include=FALSE}
+dim(data)
+names(data)
+```
+
+Specifically, we excluded some unnecessary columns which are not necessary to fill to ensure consistency. Also, we excluded all the information related to the attorney as we would not look into the applications per se through a legal perspective. Besides, we removed the specific dates of cases and addresses for employers but only keeping roughly geographical information to prepare for further analysis across states. 
+
+```{r include=FALSE}
+data.cont<- data%>%dplyr::select(-CASE_NUMBER,-EMPLOYER_PHONE_EXT,-AGENT_ATTORNEY_NAME,-AGENT_ATTORNEY_CITY,-AGENT_ATTORNEY_STATE,-PUBLIC_DISCLOSURE_LOCATION,-SUPPORT_H1B,-LABOR_CON_AGREE,-WAGE_RATE_OF_PAY_TO ,-EMPLOYER_BUSINESS_DBA,-EMPLOYER_PROVINCE,-PW_SOURCE_OTHER,-WAGE_RATE_OF_PAY_TO,-WORKSITE_CITY,-WORKSITE_COUNTY,-WORKSITE_POSTAL_CODE,-ORIGINAL_CERT_DATE,-CASE_SUBMITTED,-DECISION_DATE,-EMPLOYER_ADDRESS,-EMPLOYER_NAME,-EMPLOYER_CITY,-EMPLOYER_STATE,-EMPLOYER_POSTAL_CODE,-EMPLOYER_PHONE,-SOC_CODE,-NAICS_CODE,-WAGE_RATE_OF_PAY_FROM,-WAGE_UNIT_OF_PAY,- EMPLOYER_COUNTRY,-PW_SOURCE,-EMPLOYMENT_START_DATE,-EMPLOYMENT_END_DATE,-PW_SOURCE_YEAR)
+```
+
+After that, in order to better obtain the insights from a complete dataset, we decided to exclude all the NA records with the following manipulations.
+
+```{r include = F}
+data.cont[data.cont== ""] <- NA
+data.cont[data.cont == ","]<-NA
+data.cont[data.cont == "N/A"]<-NA
+sum(is.na(data.cont))
+data.f <-na.omit(data.cont)
+```
+
+To simplify, we only considered the cases of which the salaries are recorded as annual. Therefore, we finally obtained a dataset with 56443 observations and 18 variables.  The following is a quick summary for variables we would be dealing with from the filtered dataset. 
+
+```{r include = F}
+data.f$PREVAILING_WAGE <-as.character(data.f$PREVAILING_WAGE)
+data.f$PREVAILING_WAGE <-as.numeric(gsub("\\,", "", data.f$PREVAILING_WAGE))
+
+h1b.data <- data.f%>%filter(PW_UNIT_OF_PAY == "Year")
+h1b.data<- h1b.data%>%dplyr::select(-PW_UNIT_OF_PAY)
+
+```
+
+**Table 1 Detailed Description of Variables in the Cleaned Dataset**
+
+<center>
+|Variable | Description|
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| CASE_STATUS | Status associated with the last significant event or decision.|
+| VISA_CLASS| Type of visa classification supported by the employer request for a prevailing wage determination. |
+| AGENT_REPRESENTING_EMPLOYER | The employer by which the applicant is employed.|
+| JOB_TITLE | Title of the employer’s job opportunity.|
+| SOC_NAME | Occupational name associated with an occupational code. |
+| TOTAL_WORKERS | The total number of workers is responsible for the H1B Visa. |
+| NEW_EMPLOYMENT | Label indicates whether the applicant is newly employed. |
+| CONTINUED_EMPLOYMENT | Label indicates whether the applicant is continued employed. |
+| CHANGE_PREVIOUS_EMPLOYMENT |  Label indicates whether the applicant changed job before. |
+| NEW_CONCURRENT_EMP | Label indicates whether the applicant has several jobs at the same time. |
+| CHANGE_EMPLOYER | Label indicates whether the applicant changed emplyer before. |
+| AMENDED_PETITION | Label indicates whether the applicant amended petition for H1B application. |
+| FULL_TIME_POSITION | Label indicates whether the applicant have a full time job or not. |
+| PREVAILING_WAGE | Number for the applicants's wage per year. |
+| PW_WAGE_LEVEL | Label indicates the applicant current position level. |
+| H1B_DEPENDENT | Label indicates whether applicant has dependent spouse or children. |
+| WILLFUL_VIOLATOR | The agency finds that the employer has committed either a willful failure or a misrepresentation of a material fact . |
+| WORKSITE_STATE | The location (states level) where the applicant is hired.|
+</center>
+
+Before heading to our main part of analysis, we first plotted the salary distribution to get a picture of how annual salary distributes among foreign employees. Hence, we had a preliminary impression that: most applicants are receiving a wage within the range of 70,000 and 105,000, and the mean annual wage of the sample employees is around 90,000 dollars. The distribution of salaries is close to the normal distribution which is slightly right-skewed. 
+
+```{r,warning=FALSE, echo = F}
+summary(h1b.data$PREVAILING_WAGE)
+ggplot(h1b.data, aes(x=log(h1b.data$PREVAILING_WAGE))) + geom_density() + xlab("Log of Annual Prevailing Wage") + ylab("Density") + ggtitle("Distribution of Annual Prevailing Wage Among H1B Applicants")
+```
+
+### Mapping the data to a heatmap
+
+A heatmap is useful to provide easily-read visualized data with geographical information. In this section, we generated a heat map to display summary statistics at the states level. Specifically, we mapped the mean salaries with corresponding states. Accordingly, we created a variable named `med.income`. Additionally, we extracted the mean of `med.income`, mean income rate by state among other statistics. Here, `n` equals the number of observations within each state (See Appendix 0).
+
+```{r include = F}
+data.s <- h1b.data %>%
+  group_by(WORKSITE_STATE) %>%
+  summarise(
+    mean.income=mean(PREVAILING_WAGE), 
+    income.min=min(PREVAILING_WAGE),
+    income.max=max(PREVAILING_WAGE),
+    n=n())
+
+income <- data.s[, c("WORKSITE_STATE", "mean.income")]
+# names(income)
+# income
+colnames(income)[colnames(income)=="WORKSITE_STATE"] <- "abbr"
+states <- statepop
+states <- merge(states, income , sort=FALSE, by="abbr", all.x=TRUE)
+
+plot_usmap(data = states, values = "mean.income", lines = "white") + 
+  scale_fill_continuous(
+    low = "Light Green", high = "Dark Green", name = "Mean Salary", label = scales::comma
+  )  + theme(legend.position = "right",panel.background = element_rect(fill = "#E6E6E6")) 
+```
+
+Here, we could observe that, in general, applicants who work in states including California, Washington, Alaska, and New York may have higher levels of income compared with that employed in other states, which is somewhat against our intuition as we may expect that the states along the east coast of the United States may obtain higher income. Take one step further, the pattern showing higher income levels along the west coast may reversely demonstrate that professionals working for high-tech companies are expected to be paid more. 
+
+## Compensation Prediction
+
+In this section, we would be looking for a model that could predict the compensation of employees who are eligible for the H1B program. To prepare for the corresponding prediction, we excluded the job title and created a subset named `h1b.data.1` to solely look into the levels of income for which we would be using text mining tool to explore the corresponding job titles. 
+
+```{r include = F}
+summary(h1b.data)
+h1b.data.1 <- h1b.data%>%dplyr::select(-JOB_TITLE,-SOC_NAME)
+# summary(h1b.data.1)
+names(h1b.data.1)
+write.csv(h1b.data.1, file = "h1b_cleandata.csv",row.names=FALSE, na="")
+```
+
+### Method 1: Linear regression
+
+We started from the a simple linear regression model (Summary See Appendix 1.1).
+```{r include = F}
+fit.wage.1.0 <-lm(PREVAILING_WAGE ~., h1b.data.1)
+summary(fit.wage.1.0)
+```
+
+To further examine whether all categorical variables (`factor variables in r`) are nexessary in the regression model, we ran the Anova Type II tests. The results are shown as follows:
+```{r echo = F}
+Anova(fit.wage.1.0)
+```
+
+Based on the output above, we concluded that among all categotical variables, only `CASE_STATUS`, `AGENT_REPRESENTING_EMPLOYER`, `PW_WAGE_LEVEL`, `H1B_DEPENDENT`, and `WORKSITE_STATE` are significant at 0.001 level. Therefore, we selected these variables and built another linear regresson (Summary See Appendix 1.2). A comparison was conducted between the regression model with full variables (`fit.wage.1.0`) and the five-variable model (`fit.wage.1.1`) using Chi-square test.
+
+```{r include = F}
+fit.wage.1.1 <-lm(PREVAILING_WAGE ~CASE_STATUS+AGENT_REPRESENTING_EMPLOYER+ PW_WAGE_LEVEL+H1B_DEPENDENT + WORKSITE_STATE, h1b.data.1)
+summary(fit.wage.1.1)
+```
+```{r echo = F}
+anova(fit.wage.1.0,fit.wage.1.1)
+```
+
+Clearly, we observed that the second model with five selected variables (`fit.wage.1.1`) is far better than the full model as the former one manifests a larger F statistics and smaller p-value (nearly 0) which is also significant at 0.001 level. We thus did figure out that our model with fewer variables performed better. 
+
+### Method 2: LASSO
+
+Another way we chose to build the prediction model is to first use LASSO regression analysis to select the best subset of variables, based on which we fitted the linear model. The merit of LASSO is that it performs both variable selection and regularization to enhance the accuracy of prediction and interpretability of the model it produces.
+
+```{r include = F}
+Y = h1b.data.1$PREVAILING_WAGE
+X = model.matrix(PREVAILING_WAGE~., data=h1b.data.1)[, -12]
+set.seed(1) # control kfolds
+fit.cv <- cv.glmnet(X, Y, alpha=1, nfolds=10 )  #
+summary(fit.cv)
+#cvup = cvm+cvsd
+#cvlo = cvm - cvsd
+#plot(fit.fl.cv$lambda)      # There are 100 lambda values used
+fit.cv$cvm               # the mean cv error for each lambda
+#plot(fit.cv$lambda, fit.cv$cvm, xlab="lambda", ylab="mean cv errors")
+fit.cv$lambda.min        # lambda.min returns the min point amoth all the cvm. 
+fit.cv$nzero             # number of non-zero coeff's returned for each lambda
+```
+
+We looked for the lambda with the smallest mean square error (`MSE`) while best keep the simplicity by running the cross validation. The visualized graph drew a picture of the number of variables used for a specific lambda, as well as the corresponding `MSE`. From the following graph, we were able to observe the two recommended points displayed as two vertical lines. The left line indicates the minimum lambda (lambda.min) outputting the best model with largest AUC, while the right line represents the lambda (lambda.1se) that outputs fewer variables but remains error within one standard error of the best model.
+
+**Figure 2 log(Lambda) with Mean Square Error for Compensatin LASSO**
+
+```{r echo = F}
+plot(fit.cv)
+```
+
+We realized that the difference of `MSE` between lambda.min and lambda.1se is tiny, but that the numbers of variables change a lot. To avoid underfitting we decided to use `lambda.min` to include a few more variables to be our candidates. Then, we built a linear regression based on the variables chosen and proceed Type II tests to see if the selected variables were significant. The results of Type II tests are shown as follows:
+
+```{r Output coefficients from lambda.min, include = F}
+coef.min <- coef(fit.cv, s="lambda.min")  #s=c("lambda.1se","lambda.min") or lambda value
+coef.min <- coef.min[which(coef.min !=0),]   # get the non=zero coefficients
+coef.min  # the set of predictors chosen
+rownames(as.matrix(coef.min)) # shows only names, not estimates  
+```
+
+```{r Fit the model, include = F}
+fit.wage.2.0 <-lm(PREVAILING_WAGE ~ CASE_STATUS+AGENT_REPRESENTING_EMPLOYER+NEW_EMPLOYMENT+CHANGE_PREVIOUS_EMPLOYMENT+CHANGE_EMPLOYER+AMENDED_PETITION+ PW_WAGE_LEVEL+ WORKSITE_STATE, h1b.data.1)
+summary(fit.wage.2.0)
+```
+
+```{r}
+Anova(fit.wage.2.0)
+```
+
+From the above output, all variables prove to be significant at 0.01 level. Therefore, we obtained a LASSO regression model with eight variables: `CASE_STATUS`, `AGENT_REPRESENTING_EMPLOYER`, `NEW_EMPLOYMENT`, `CHANGE_PREVIOUS_EMPLOYMENT`, `CHANGE_EMPLOYER`, `AMENDED_PETITION`, `PW_WAGE_LEVEL`, and `WORKSITE_STATE`.
+
+To test if the models were performing well, we randomly picked a sample from the dataset and see the prediction results.
+```{r include = F}
+set.seed(15)
+test <- h1b.data.1[sample(nrow(h1b.data.1), 1), ]
+test$PREVAILING_WAGE
+predict(fit.wage.2.0, test)
+predict(fit.wage.1.1, test)
+```
+
+**Table 2 Sample Prediction Results with Two Models**
+
+<center>
+Actural Value | Prediction with Linear Regression | Prediction with LASSO Regression
+-------------------|---------------------------------------|---------------------------------------
+70200 | 85283.91 | 85098.21
+</center>
+
+Overall, we observed a quite satisfying performance of the model, within the fault tolerance range of 20% (approximately), rather than a high accuracy prediction though.
+
+## Job Title Text Mining
+
+Here, we will be doing text mining especially for job titles to find out high-pay jobs for international students and foreign professionals, so that we could hopefully help H1B candidates to consider their future in advance, especially their choice of whether to experience the tiring H1B application and indispensable negotiation with employers as well.
+
+For technical convenience, we will be using the word term frequency table to extract texts into words frequencies. To achieve this goal, first we formed a bag of words where all the words appeared in the documents say N; then for each document (row) we recorded the frequency (count) of each word in the bag which give us N values (notice: most of the entries are 0); and finally we output the document term matrix (`dtm`) as an input for future transformations.
+
+```{r include = F}
+data1.text <- data.f$JOB_TITLE   # take the text out
+# length(data1.text)
+# typeof(data1.text)
+```
+
+To align with our research goal, we only looked into the column describing the job titles of H1B candidates in our dataset. Accordingly, we have `r length(data1.text)` variables in the original dataset, and the type is defined as `r typeof(data1.text)`. The following are the first five elements.
+
+```{r echo = F}
+print(data1.text[1:5]) # view a few documents
+```
+
+### Data preparation
+
+Here we display detailed data preparation for our text mining precedure. 
+
+First, to obtain best results, we considered all the word as candidate keywords. We converted all the keywords into low case and removed punctuation, numbers and stopwords to match the word package in the R software. 
+
+```{r include = F}
+mycorpus1 <- VCorpus( VectorSource(data1.text))
+mycorpus2 <- tm_map(mycorpus1, content_transformer(tolower))
+mycorpus3 <- tm_map(mycorpus2, removeWords, stopwords("english"))
+mycorpus4 <- tm_map(mycorpus3, removePunctuation)
+mycorpus5 <- tm_map(mycorpus4, removeNumbers)
+mycorpus6 <- tm_map(mycorpus5, stemDocument, lazy = TRUE)   
+dtm1 <- DocumentTermMatrix(mycorpus6 )   ## library = collection of words for all documents
+as.matrix(dtm1[1, 1:50])
+
+dtm1 <- DocumentTermMatrix(mycorpus6)   ## library = collection of words for all documents
+dtm1
+```
+
+Then we set a sparsity threshold to remove keywords occur below threshold, and we also combined all the origin feature with text mining to output a new dataset for future analysis.
+
+```{r include = F}
+threshold <- .01*length(mycorpus6)   # 1% of the total documents 
+words.10 <- findFreqTerms(dtm1, lowfreq=threshold)  # words appearing at least among 1% of the documents
+dtm.10<- DocumentTermMatrix(mycorpus6, control = list(dictionary = words.10))  
+#colnames(dtm.10)[1:50]
+
+## Combine the original data with the text matrix
+data1.temp <- data.frame(data.f,as.matrix(dtm.10) )   
+# data2 consists of date, rating and all the top 1% words
+data2 <- data1.temp[, c(1,7, 8,11, 14:ncol(data1.temp))]
+data2.mining = data2[,-c(1,2,3,4,6,7,8,9,10)]
+# names(data2.mining)
+```
+
+### Model Building
+
+We used LASSO regression for text mining analysis. The procedure is similar to what we have done previously for salary prediction, and our results indicated a bag of selected words that are the most important to the dependent variable.
+
+```{r include = F}
+Y = data2$PREVAILING_WAGE
+X = model.matrix(PREVAILING_WAGE~., data=data2.mining)[, -1]
+```
+
+```{r include = F}
+set.seed(1) #control kfolds
+fit.cv.mining <- cv.glmnet(X, Y, alpha=1, nfolds=10 )  #
+summary(fit.cv.mining )
+#cvup = cvm+cvsd
+#cvlo = cvm - cvsd
+#plot(fit.fl.cv$lambda)      # There are 100 lambda values used
+fit.cv.mining$cvm               # the mean cv error for each lambda
+#plot(fit.cv$lambda, fit.cv$cvm, xlab="lambda", ylab="mean cv errors")
+fit.cv.mining$lambda.min        # lambda.min returns the min point amoth all the cvm. 
+fit.cv.mining$nzero             # number of non-zero coeff's returned for each lambda
+```
+
+The folowing is the LASSO plot with mean square error for text mining.
+
+**Figure 3 log(Lambda) with Mean Square Error for Text Mining LASSO**
+
+```{r echo = F }
+plot(fit.cv.mining)
+```
+
+We will be using `lasso.min` to choose variables because `lasso.min` output the smallest mean square error. Accordingly, we built a linear regression based on the variables chosen by LASSO. Thus, we obtained the regression model `result.lm` as the result of text mining procedure.
+
+```{r include = F}
+coef.min.2 <- coef(fit.cv.mining, s="lambda.min")  #s=c("lambda.1se","lambda.min") or lambda value
+coef.min.2 <- coef.min.2[which(coef.min.2 !=0),]   # get the non=zero coefficients
+coef.min.2  # the set of predictors chosen
+beta <- rownames(as.matrix(coef.min.2)) # shows only names, not estimates  
+```
+
+```{r include = F}
+lm.input <- as.formula(paste("PREVAILING_WAGE", "~", paste(beta[-1],collapse = "+"))) # prepare the formulae
+result.lm <- lm(lm.input, data2.mining) 
+```
+
+After that, we pulled out all the positive coefficients and the corresponding words. We ranked the coefficients in decreasing order and reported the leading 2 words and the coefficients, where we observed a right-skewed frequency distribution of coefficients.
+ 
+```{r echo = F}
+result.lm.coef <- coef(result.lm)
+# result.lm.coef[2:50]
+hist(result.lm.coef, main = "Histogram of Text Mining Regression Coefficients", xlab = "Coefficients of Regression")
+good.lm <- result.lm.coef[which(result.lm.coef > 0)]
+# names(good.glm)  # which words are positively associated with good ratings
+good.fre <- sort(good.lm, decreasing = TRUE) # sort the coef's
+round(good.fre, 4)[1:2] # leading 2 positive words, amazing!
+```
+
+```{r include = F}
+hist(coef.min.2)
+good.lm <- result.lm.coef[which(result.lm.coef > 0)]
+#names(good.glm)  # which words are positively associated with high salary
+good.fre <- sort(good.lm, decreasing = TRUE) # sort the coef's
+round(good.fre, 4)[1:2] # leading 2 positive words, higher salary
+```
+
+Finally, we output word clouds to visualize the correlation between positive words and negative words. Specifically, we ordered the `result.lm` positive coefficients (aka positive words) and output a word cloud, where the size of words displayed indicates the strength of positive correlation between that word and the chance of being a good rating. The logic is similar for negative words. 
+
+The following images are the word clouds respectively for positive words and negative words, namely, the high-pay job titles and the low-pay job titles. 
+
+**Figure 4 Word Cloud for High-Pay and Low-Pay Job Titles**
+
+```{r echo = F}
+cor.special <- brewer.pal(8,"Dark2")  # set up a pretty color scheme
+good.word <- names(good.fre)  # good words with a decreasing order in the coeff's
+# good.word[10]
+good.word <- good.word[-(10)] # remove the word "iii" which doesnt make sense
+bad.lm <- result.lm.coef[which(result.lm.coef < 0)]
+bad.fre <- sort(bad.lm) # sort the coef's
+# round(bad.fre, 4)[1:2] # leading 2 negative words
+bad.fre <- sort(bad.lm, decreasing = TRUE) # sort the coef's
+bad.word <- names(bad.fre)  # good words with a decreasing order in the coeff's
+
+set.seed(999)
+par(mfrow=c(1,2))
+wordcloud(good.word[2:24], good.fre[2:24],colors=cor.special, ordered.colors=F,scale=c(3.5,0.25))
+wordcloud(bad.word[2:15], -bad.fre[2:15],colors=cor.special, ordered.colors=F,scale=c(3.5,0.25))
+```
+
+Based on the word clouds shown above, we can infer that:
+
+1. Higher level of positions leads to higher compensation, which is very intuitive. For example, we can observe that the top largest words of the high-pay word clouds are `director`, `principal`, and `manager`, which are basically primary managing or leader positions. Comparatively, we can see entry-level positions like `specialist`, `analyst`, and `assistant` included in the low-pay word cloud. 
+
+2. Specialty does matter the compensation for foreign employees. We found that high-pay jobs, to a large extent, are related to data science and computer science, including `software engineer`, `computer scientist` and `technician`, where professionals in `JAVA` and `database` seems to be in high demand relatively. Besides, `architect` and `consultant` are also positions with a competitive salary. It is noteworthy that even in the low-pay word cloud, we still observed keywords like `system`, `technology`, and `programmer`. This result indicates that technological talents are in great demand where foreigners are more likely to find a job regardless of the level of income.
+
+3. Researchers and postdoctoral fellows account for another large proportion of H1B candidates. Most of the keywords occur in the low-pay group, where we found `professor`, `research`, and `postdoctor` based on the word cloud. This condition suggests that The United States is still proactively absorbing scholars and providing an academic environment featuring openness and freedom, even though the pay of these positions is not necessarily competitive.
+
+To sum up, foreigners specialized in technology such as computer science and data science are welcomed and could obtain competitive income if being promoted to higher levels of positions. Scholars and researchers are also supported compared with other titles. Business talents may not be a large group in terms of H1B candidates (we saw very few words describing business related positions, such as `business` and `accountant`).
+
+## H1B Approval Prediction
+
+As we know that H1B petitions need to be approved by the government to finally confirm eligibility of candidates, we decided to look into the approval data and expected to find some insights through analysis. We did a few transformations for our dataset to match the requirements for regression and decision tree analysis in R software.
+
+```{r include = FALSE}
+str(h1b.data.1)
+h1b.data.1$CASE_STATUS <- as.factor(h1b.data.1$CASE_STATUS)
+h1b.data.1$VISA_CLASS <- as.factor(h1b.data.1$VISA_CLASS)
+h1b.data.1$AGENT_REPRESENTING_EMPLOYER <- as.factor(h1b.data.1$AGENT_REPRESENTING_EMPLOYER)
+h1b.data.1$FULL_TIME_POSITION <- as.factor(h1b.data.1$FULL_TIME_POSITION)
+h1b.data.1$PW_WAGE_LEVEL <- as.factor(h1b.data.1$PW_WAGE_LEVEL)
+h1b.data.1$H1B_DEPENDENT <- as.factor(h1b.data.1$H1B_DEPENDENT)
+h1b.data.1$WILLFUL_VIOLATOR <- as.factor(h1b.data.1$WILLFUL_VIOLATOR)
+
+levels(h1b.data.1$AGENT_REPRESENTING_EMPLOYER)
+h1b.data.h1b <- h1b.data.1[h1b.data.1$CASE_STATUS != "WITHDRAWN",]
+dim(h1b.data.h1b)
+
+h1b.data.h1b<- h1b.data.h1b %>% dplyr::select(-WORKSITE_STATE)
+```
+
+The response in the original dataset is the variable called `CASE_STATUS` which includes four levels of case status `CERTIFIED`, `CERTIFIED-WITHDRAWN`, `DENIED`, and `WITHDRAWN` representing whether the H1B was approved or not. For those of cases which were withdrawn, we didn't know the whether the employee had been terminated, or the the employee had left the company. So we got rid of these cases and thus our final dataset consists of 54771 cases. We assigned `DENIED` as 0 and `CERTIFIED` or `CERTIFIED-WITHDRAWN` as 1 in our case. 
+
+```{r include = FALSE}
+# assign CERTIFIED or CERTIFIED-WITHDRAWN to be 1, and DENIED to be 0
+levels(h1b.data.h1b$CASE_STATUS)[levels(h1b.data.h1b$CASE_STATUS) == "DENIED"] <- 0
+levels(h1b.data.h1b$CASE_STATUS)[levels(h1b.data.h1b$CASE_STATUS) != 0] <- 1
+
+sum(h1b.data.h1b$CASE_STATUS == 1)
+sum(h1b.data.h1b$CASE_STATUS == 0)
+```
+
+We split the dataset into training data and testing data for predictive model building as well as performance test. A dominant advantage of splitting data is that we could use the training model to generate predictions for testing data without sample overlapping because it makes little sense if we validated our model with the same sample used to build the model.
+
+```{r include=FALSE}
+# split and build training and testing set
+set.seed(10)
+N <- length(h1b.data.h1b$CASE_STATUS)
+index.train <- sample(N, 40000)
+h1b.train <- h1b.data.h1b[index.train,]
+h1b.test <- h1b.data.h1b[-index.train,]
+```
+
+We first drew a boxplot to see case status are related with annual salary, and we found applications with extremely high or low salary are more likely to be denied. The boxplot is shown as Appendix 3.0.
+
+### Direct Logistic Regression
+
+In this section, we first used the training data to fit the logistic regression model by including all the predictors. From the summary, we found that there are many categorical variables with some kind of levels. `Anova()` is a good way to drop categorical predictors which have small p-values. Following the results of `Anova()`, we used the backward selection method to keep only variables whose coefficients are significantly different from 0 at .05 level. We kicked out the variable with the largest p-value first, and then re-fitted the model to see if there were other variables that should be excluded. The final model we got contains 11 variables which were `VISA_CLASS`, `AGENT_REPRESENTING_EMPLOYER`, `TOTAL_WORKERS`, `NEW_EMPLOYMENT`, `CONTINUED_EMPLOYMENT`, `CHANGE_PREVIOUS_EMPLOYMENT`, `CHANGE_EMPLOYER`, `AMENDED_PETITION`, `FULL_TIME_POSITION`, `PREVAILING_WAGE` and `H1B_DEPENDENT`.
+
+From Appendix 3.5, we could figure out the model does not satisfy the linearity.
+
+```{r,include=F,warning= F}
+# logistic regression
+fit.glm <- glm(CASE_STATUS~., data = h1b.train, family=binomial(logit))
+summary(fit.glm)
+
+Anova(fit.glm)
+
+# backward selection
+fit.glm.1 <- update(fit.glm, .~. -NEW_CONCURRENT_EMP)
+summary(fit.glm.1)
+Anova(fit.glm.1)
+fit.glm.2 <- update(fit.glm.1, .~. -WILLFUL_VIOLATOR)
+summary(fit.glm.2)
+Anova(fit.glm.2)
+fit.glm.3 <- update(fit.glm.2, .~. -PW_WAGE_LEVEL)
+summary(fit.glm.3)
+Anova(fit.glm.3)
+
+```
+
+### Elastic Net Logistic Regression
+
+Apart from the direct logistic regression, we also tried to select a model with a few important variables through elastic net. It is better to filter a subset of variables that are most important to the dependent variable, otherwise, the workload will be too much with very little efficiency. We used LASSO regression to realize this step, by setting $\alpha=1$ and apply 5 fold Cross Validation (CV) to minimize the deviance.
+
+The plot of log(Lambda) vs. Mean-Squared Error is shown in Appendix 3.1). The first vertical line is the `lambda.min`, or the $\lambda$ which gives the smallest cvm, while the second vertical line is `lambda.1se`, or largest $\lambda$ whose cvm is within the cvsd bar for the `lambda.min` value. In this section, we chose `lambda.min` to select a set of variables to build our model because we wanted the lowest mean square error. 
+
+```{r include=FALSE}
+# lasso model
+X.lasso <- model.matrix(CASE_STATUS~., h1b.train)[, -1]
+Y.lasso <- h1b.train$CASE_STATUS
+
+set.seed(10)
+fit.lasso.cv <- cv.glmnet(X.lasso, Y.lasso, family="binomial", nfolds = 5, type.measure = "deviance")
+plot(fit.lasso.cv)
+```
+
+Based on the variables chosen by `lambda.min`, we refitted logistic regression model accordingly. To make a comparison, we also took a look at the important variables chosen by `lambda.1se`. However,there are no variables selected by `lambda.1se`. 
+
+```{r include = F}
+# using min and 1se
+coef.1se <- coef(fit.lasso.cv, s="lambda.1se")  
+coef.1se <- coef.1se[which(coef.1se !=0),] 
+coef.1se
+
+coef.min <-coef(fit.lasso.cv, s="lambda.min") 
+coef.min <- coef.min[which(coef.min !=0), ]
+coef.min
+```
+
+**<span style="color:red">TO Write</span>**
+
+```{r include=FALSE}
+# refit glm
+fit.lasso.min.glm <- glm(CASE_STATUS~VISA_CLASS, family=binomial, data=h1b.train)
+summary(fit.lasso.min.glm)
+Anova(fit.lasso.min.glm)
+```
+
+
+### Single Decision Tree
+
+Next, we fitted a single decision tree, which is a popular model in data mining. The idea of decision tree is to partition the space into $J$ boxes $R_1, R_2, \ldots, R_J$. The target is to minimize the RSS $$\sum_{j=1}^J \sum_{i \in R_j} (y_i - \hat{y}_{R_j})^2$$ where $\hat{y}_{R_j}$ is the mean of the training samples in the region $R_j$. Since decision tree is not a linear model, it can be more flexible and can take interactions among variables. Using a single tree, we can show the interpretation by visualizing the split of the tree.
+
+We tuned the deep of the tree by changing the parameter `mindev`. If the value is too small, there might be only one split. However, we would get an overfitting tree if we set too small value to the `mindev`. After trying for multiple times, we chose 0.0006 for the `mindev`, which is neither too small nor deep. The plot of the single decision tree can be found in Appendix 3.2. 
+
+The final tree has 168 terminal nodes (leaves) and contains 11 variables which are `H1B_DEPENDENT`,`VISA_CLASS`, `AGENT_REPRESENTING_EMPLOYER`, `PREVAILING_WAGE`, `CONTINUED_EMPLOYMENT`, `PW_WAGE_LEVEL`, `AMENDED_PETITION`, `TOTAL_WORKERS`, `CHANGE_EMPLOYER`, `CHANGE_PREVIOUS_EMPLOYMENT`, and `NEW_EMPLOYMENT`.
+
+```{r include=FALSE}
+# single decision tree
+fit.tree <- tree(CASE_STATUS~., h1b.train, control=tree.control(nrow(h1b.train), mindev = 0.0006))
+summary(fit.tree)
+
+plot(fit.tree)
+text(fit.tree, pretty=TRUE)
+```
+
+### Ramdon Forest
+
+One problem of single decision tree described above is its high variance, which, fortunately, could be reduced by bagging. However, bagging produces highly correlated trees which turns out will not help reduce variance substantially. Thus, we introduced random forest in this section to tackle this problem by forcing to split only a subset of predictors.
+
+The algorithm of the random forest is as follows:
+
+For b=1 to B, we took a bootstrap sample of size n. Then we built a tree using the bootstrap sample recursively until the n_min is met. Here in classification tree, we randomly selected m variables (mtry = $\sqrt{p}$). For each variable, we found the best split point such that the misclassification errors could be minimized by **majority vote**. When we found the best variable and split point, splitted the node into two, and the end node would output the majority vote either 0 or 1. 
+
+To implement the random forest algorithm, we used the randomForest package in r, and fit the model using training data. Tuning parameter `m` is thus introduced. If m is too small, we might miss important variables; if `m` is too large, there would be more correlations between trees, which is not goood either. We used default setting of `mtry`, which is $\sqrt{p}$. The choices for Bootstrap size B (ntree) affect the performance, and usually, the error decreases as the size of ntree increases. Therefore, we used a large number `ntree = 100`. All other parameters we used in this study are default settings as well.
+
+```{r include=FALSE}
+# random forest model
+fit.rf <- randomForest(CASE_STATUS~., h1b.train,ntree = 100)
+varUsed(fit.rf, by.tree=FALSE, count=TRUE)
+```
+
+## Evaluation
+
+### Model Evaluation
+
+#### Misclassification Error
+
+After fitting all the models using training data, we will be evaluating the performace of each model by predict on the testing data, and calculating the misclassification error.
+
+For direct logistic regression and LASSO with logistic regression, we predicted the probability on the testing data, and chose the threshold of 1/2. All probabilities that are greater than 1/2 are classified as 1, while those less than 1/2 are classified as 0. For random forest, the prediction is estimated by the majority vote of the aggregated trees, while the probability is estimated by the sample proportion of 1's among aggregated trees. 
+
+To illustrate the classification results, we show the confusion matrics of all models (See Appendix 3.3). Confusion matrix is a table to describe the performance of a classification model on a set of test data for which the true values are known. 
+
+We then obtained the misclassification error of each model by calculating the mean values of missclassifications $$MCE= \frac{1}{n} \sum_{i=1}^n \{\hat y_i \neq y_i\}$$
+
+The misclassification errors of all the model tried in the section 3 is shown below. Logistic regression models didn't display a good predicting perforemance because our dataset is unbalanced. However, Decision trees seem to work quite well in predicting H1B status.
+
+**Table 3 Summary of Misclassification Error for Models**
+
+<center>
+Model Name | Misclassification Error
+--------------------------- | -----------------
+Single Decision Tree |  0.009
+Random Forest | 0.008
+</center>
+
+**Warning: ** We do not include misclassification error for logistic and lasso, because the model are not appropriate for h1b data. Logistic model require balanced dataset while our h1b dataset is extremly unbalanced. 
+
+```{r include=FALSE}
+# glm
+fit.glm.test <- predict(fit.glm.3, h1b.test)
+fit.glm.predict <- ifelse(fit.glm.test > 0.5, 1, 0)
+mce.glm.5 <- mean(fit.glm.predict != h1b.test$CASE_STATUS)
+mce.glm.5
+fit.glm.roc <- roc(h1b.test$CASE_STATUS, fit.glm.test, plot=T, col="blue")
+fit.glm.roc$auc
+
+# LASSO with glm
+## min
+fit.lasso.min.test <- predict(fit.lasso.min.glm, h1b.test, type="response")
+fit.lasso.min.predict <- ifelse(fit.lasso.min.test > 0.5, 1, 0)
+mce.lasso.min.5 <- mean(fit.lasso.min.predict != h1b.test$CASE_STATUS)
+mce.lasso.min.5
+fit.lasso.min.roc<- roc(h1b.test$CASE_STATUS, fit.lasso.min.test, plot=T, col="blue")
+fit.lasso.min.roc$auc
+
+# single decision tree
+tree.predict.label <- predict(fit.tree, newdata=h1b.test, type="class")
+tree.predict.prob <- predict(fit.tree, h1b.test)[, 2]
+tree.test.err <- mean(h1b.test$CASE_STATUS != tree.predict.label)
+tree.test.err
+fit.tree.roc <- roc(h1b.test$CASE_STATUS, tree.predict.prob, plot=T) 
+fit.tree.roc$auc
+
+# Random forest
+rf.predict.label <- predict(fit.rf, newdata=h1b.test)
+rf.predict.prob <- predict(fit.rf, newdata=h1b.test, type="prob")
+rf.test.err <- mean(h1b.test$CASE_STATUS != rf.predict.label)
+rf.test.err
+fit.rf.roc <- roc(h1b.test$CASE_STATUS, rf.predict.prob[,2], plot=TRUE)
+fit.rf.roc$auc
+```
+
+### ROC curve and AUC
+
+For each model or analyzing process, there will be a pair of sensitivity and specificity given a threshold or a classifier. We then plotted ROC curve which includes all the pairs of **False Positive** and **True Positive** by changing the thresholds. We overlayed ROC curves of all the models, shown as below, to measure their performance. As we can see, all models have the similar trend with direct logistic regression while LASSO performs a little better.
+
+```{r echo=FALSE}
+# overlay roc curves
+plot(1-fit.glm.roc$specificities, fit.glm.roc$sensitivities, col="purple", pch=16, cex=.6, 
+     xlab="False Positive", 
+     ylab="Sensitivity", main="Overlaying ROC Curves")
+points(1-fit.lasso.min.roc$specificities, fit.lasso.min.roc$sensitivities, col="green", pch=16, cex=.6)
+points(1-fit.tree.roc$specificities, fit.tree.roc$sensitivities, col="black", pch=16, cex=.6)
+points(1-fit.rf.roc$specificities, fit.rf.roc$sensitivities, col="red", pch=16, cex=.6)
+legend("bottomright", c("Logistic Regression","LASSO with glm (lambda.min)", "LASSO with glm (lambda.1se)", "decision tree", "random forest"), fill=c("purple","green", "blue", "black", "red"))
+```
+
+AUC is "the area under the curve", which is also used to measure the performance of the classifier as a whole. The classifier with larger AUC means the classifier is better. We summarized AUCs of all the model in the following table.
+
+**Table 4 Summary of AUCs of Models**
+
+<center>
+Model Name | AUC
+--------------------------- | -----------------
+Direct Logistic Regression | 0.65
+LASSO with glm (lambda.min) | 0.51
+Single Decision Tree | 0.59
+Random Forest | 0.55
+</center>
+
+
+### Bayes Rule with Unequal Loss
+
+In reality, the loss of mislabeling may be different, and we should consider the weighted loss into our classification to be best implemented in real-world scenario. Thus, we tried to use Bayes Rule to treat this problem. Specifically, we first made the corresponding equation for the preparation of conducting Bayes Rule classification. Then, we used the testing data to see how well the classifier performed. In our case, the two type of the mistakes cost almost the same, so we set the loss ratio to 1:1. 
+
+The loss function is:
+$a_{1,0}=L(Y=1, \hat Y=0)$: the loss (cost) of making an "1" to a "0".  
+$a_{0,1}=L(Y=0, \hat Y=1)$: the loss of making a "0" to an "1".  
+$a_{0, 0} = a_{1, 1}=0$
+
+We calculated weighted misclassification error with $\frac{a_{0,1}}{a_{1,0}}=2$ and used Bayes rule:
+$$P(Y=1 \vert x) > \frac{\frac{a_{0,1}}{a_{1,0}}}{1 + \frac{a_{0,1}}{a_{1,0}}}$$
+
+The weighted misclassification errors of all the model tried is shown below.
+
+**Table 5 Summary of Weighted Misclassificaton Error of Models**
+
+<center>
+Model Name | Weighted Misclassification Error
+--------------------------- | -----------------
+Single Decision Tree | 0.01
+Random Forest | 0.009
+</center>
+
+```{r include=FALSE}
+# glm
+fit.glm.bayes <- as.factor(ifelse(fit.glm.test > 0.5, 1, 0))
+mce.glm.bayes.5 <- (sum(5*(fit.glm.bayes[h1b.test$CASE_STATUS == 1] != 1)) + sum(fit.glm.bayes[h1b.test$CASE_STATUS == 0] != 0))/length(h1b.test$CASE_STATUS)
+mce.glm.bayes.5
+
+# lasso min
+fit.lasso.min.bayes <- as.factor(ifelse(fit.lasso.min.test > 0.5, 1, 0))
+mce.lasso.min.bayes.5 <- (sum(5*(fit.lasso.min.bayes[h1b.test$CASE_STATUS == 1] != 1)) + sum(fit.lasso.min.bayes[h1b.test$CASE_STATUS == 0] != 0))/length(h1b.test$CASE_STATUS)
+mce.lasso.min.bayes.5
+
+# tree
+#fit.glm.bayes <- as.factor(ifelse(fit.glm.test > 0.5, "1", "0"))
+mce.glm.bayes.5 <- (sum(5*(tree.predict.label[h1b.test$CASE_STATUS == 1] != 1)) + sum(tree.predict.label[h1b.test$CASE_STATUS == 0] != 0))/length(h1b.test$CASE_STATUS)
+mce.glm.bayes.5
+
+# random forest
+#fit.glm.bayes <- as.factor(ifelse(fit.glm.test > 0.5, 1, "0"))
+mce.rf.bayes.5 <- (sum(5*(rf.predict.label[h1b.test$CASE_STATUS ==1] != 1)) + sum(rf.predict.label[h1b.test$CASE_STATUS == 0] != 0))/length(h1b.test$CASE_STATUS)
+mce.rf.bayes.5
+
+
+```
+
+From the summary table, we could see that random forest is absolutely the best model for the H1B approval prediction. Logistic regression and LASSO could not take variables interactions. For H1B disclosure data with all categorical variables, random forest model ought to be the most accurate model for workers to predict their approval status of H1B application.
+
+### Variable Evaluation
+
+To explore which identify the important risk factors that a loan will be fully paid or not, we listed the predictors selected by each model summarized as follows:
+
+**Table 6 Summary of Predictors Selected by Models**
+
+<center>
+Predictors | Logistic Regression | LASSO with glm (min) | Single Tree | Random Forest
+------------------------------------------------------- | ------------- | -------------- | --------------- | ---------- | ----------
+VISA_CLASS | v | v | v | v
+AGENT_REPRESENTING_EMPLOYER | v | -- | v | v
+TOTAL_WORKERS | v | -- | v | v
+NEW_EMPLOYMENT | v | -- | v | v
+CONTINUED_EMPLOYMENT | v | -- | v | v
+CHANGE_PREVIOUS_EMPLOYMENT | v | -- | v | v
+NEW_CONCURRENT_EMP | -- | -- | -- | v
+CHANGE_EMPLOYER | v | -- | v | v
+AMENDED_PETITION | v | -- | v | v
+FULL_TIME_POSITION | v | -- | -- | v
+PREVAILING_WAGE | v | -- | v | v
+PW_WAGE_LEVEL | -- | -- | v | v
+H1B_DEPENDENT | v | -- | v | v
+WILLFUL_VIOLATOR | -- | -- | -- | v
+</center>
+
+Since random forest is an ensemble method, it includes almost all the variables. Take a step further, we introduced a metric to measure the importance of variables. To get the variable importance of each variable, we sum over the decrease of gini index (RSS for regression trees) of the splits using the given variable in each tree, and then average across the bagged trees the sum of gini index reduction(See the graph in Appendix 3.4).
+
+From the above analysis, we concluded that predictors `PREVAILING_WAGE` and `VISA_CLAS`S are two important factors with respect to random forest. While predictors `WILLFUL_VIOLATOR` and `NEW_CONCURRENT_EMP` are less important.
+
+## Conclusion and Discussion
+
+### Compensation Prediction and Text Mining
+
+From LASSO and text mining model, we figured out international employees are targeting high-tech company jobs. Most international students and foreign professionals have a very decent annual compensation, with the average of 90 thousands dollars, which is much higher than the average compensation level across the United States. We also conlcuded that higher salaries are tied with higher levels of postiions, more economically flourishing states, and the specialties included in the job titles. Furthermore, we observed that workers who have been promoted to principals, senior levels, and managers should have a relatively high salary, while jobs such as accountant, assistant and associate are more likely to be  correlated with lower levels of compensation.
+
+### H1B Approval Prediction
+
+Overall, it is very unlikely a H1B petition would get denied after being selected as part of H1B project, except for the condition where an employee is doing a job which is highly replaceable or his/her annual salary is below the H1B standard records for this specific job title. The most important factor for the approval of H1B, based on our analysis, is the annual salary. In other words, if the employee were receiving a relatively high salary, doing a job which is closely related to his/her degree major (undergrad or graduate degrees), then he or she would be less likely to be denied through the final consideration of H1B projects.
+
+### Discussions
+
+As an end note, although we successfully obtained some useful insights with respect to H1B applications, our conclusion is still prone to critiques.
+
+The major problem is that H1B candidates are largely selected by the lottery system in oppose to a manual filter (Retrieved from https://www.uscis.gov/archive/archive-news/uscis-reaches-fy-2017-h-1b-cap), which contains too many uncontrollable factors and uncertainty. One of the most direct evidence shown in our analysis is the astonishingly bad performance of regression models in predicting the approval status, of which the misclassification errors are around 0.99, indicating a large degree of stochasticity within. However, we still decided to explore the H1B dataset because we are part of the eligible candidates with somewhat worries about career paths after graduation. We would like to see if there is any easily-captured trend so that international students could carefully think about their future beforehand.
+
+Another critical issue is that we didn't consider different pool of H1B candidates, where people from Singapore or Chile are eligible for a separate H-1B1 visa application ratified by the Singapore-United States Free Trade Agreement (Retrieved from https://www.govtrack.us/congress/bills/108/hr2739) and the Chile-United States Free Trade Agreement (Retrieved from https://www.nytimes.com/2003/06/07/business/chile-and-us-sign-accord-on-free-trade.html) in 2003. Thus, there should be different analysis for these two countries since they are not on the same page of H1B candidates from other countries such as China and India. In future exploration, researchers should also conduct analysis supported by legal documents to best capture the subtle regularity for foreign working visa applications and other similar certifications. 
+
+More importantly, the explanatory power of our analysis is limited. We noticed that our dataset is restricted to a narrow period of time, which couldn't manifest the changes throughout the past decades where some more profound insights might be inferred or uncovered. To be more specific, the analysis towards H1B could be more compelling if being put in a bigger picture, say, an exploration of the preferences or trends hidden in the demand of the job markets within the United States. A slight touch upon the data retrieved from one year is faint in explaining or even predicting the macro employment patterns for foreign talents. A ten-year based investigation is probably needed for more valuable and rigorous conclusions.
+
+In addition, we found some vital limitations of the dataset. For example, we noticed that the education levels of H1B candidates are not included, whereas candidates with undergraduate degrees and those with graduate degrees are handled respectively according to the H-1B Visa Reform Act and recent announcements from United States Immigration and Citizenship Services (Retrieved from https://timesofindia.indiatimes.com/world/us/a-us-masters-degree-will-increase-your-chances-of-an-h1-b-visa/articleshow/66902664.cms), whereas we were failed to find education-related records in the dataset. This missing data might account for the weakness of our models which we kept being skeptical of. It would be very helpful if future researched could dig deeply into the correlations between education, salaries, employers submitting the petitions, and job titles for foreign talents.
+
+\pagebreak
+
+# Acknowledgement
+
+We would like to thank Prof Linda Zhao for this impressive class and guidance along the way, every TA who has once helped us out, and every fellows who played a role in the success of our final project. The views expressed in this paper are those of the authors and do not necessarily reflect the views of the University of Pennsylvania or the Wharton School. 
+
+\pagebreak
+
+# Appendices
+
+## Appendix 0 Explanatory Analysis:  Mean Salary across States
+
+```{r echo = F}
+plot_usmap(data = states, values = "mean.income", lines = "white") + 
+  scale_fill_continuous(
+    low = "Light Green", high = "Dark Green", name = "Mean Salary", label = scales::comma
+  )  + theme(legend.position = "right",panel.background = element_rect(fill = "#E6E6E6")) 
+```
+
+## Appendix 1 Compensation Prediction: Linear Regression
+
+**Appendix 1.1 Simple Linear Regression Summary: Full model**
+
+```{r}
+summary(fit.wage.1.0)
+```
+
+**Appendix 1.2 Simple Linear Regression Summary: Five-variable model**
+
+```{r}
+summary(fit.wage.1.1)
+```
+
+## Appendix 2 Compensation Prediction: LASSO
+
+**Appendix 2.1 Coefficients for the subset selected by LASSO analysis**
+
+```{r}
+coef.min <- coef(fit.cv, s="lambda.min")  #s=c("lambda.1se","lambda.min") or lambda value
+coef.min <- coef.min[which(coef.min !=0),]   # get the non=zero coefficients
+coef.min  # the set of predictors chosen
+rownames(as.matrix(coef.min)) # shows only names, not estimates  
+```
+
+**Appendix 2.2 LASSO regression**
+
+```{r}
+summary(fit.wage.2.0)
+```
+## Appendix 3 H1B APPROVAL PREDICTION
+
+
+**Appendix 3.0 Boxplot of Annual Salary with Certified and Denied Status**
+
+```{r echo=F, warning = F }
+boxplot(log(h1b.train$PREVAILING_WAGE) ~ h1b.train$CASE_STATUS, ylab ="Annual Salary", xlab = "STATUS")
+```
+
+
+**Appendix 3.1 Plot of log(Lambda) vs. Mean-Squared Error**
+
+```{r,echo = F}
+plot(fit.lasso.cv)
+```
+
+**Appendix 3.2 Plot of single tree to predict H1B approval**
+
+```{r,echo= F}
+plot(fit.tree)
+text(fit.tree, pretty=TRUE)
+```
+
+**Appendix 3.3 Confusion Matrix to predict H1B approval** 
+
+```{r echo=FALSE}
+cm.glm.5 <- table(fit.glm.predict, h1b.test$CASE_STATUS)
+cm.glm.5
+
+cm.lasso.min.5 <- table(fit.lasso.min.predict, h1b.test$CASE_STATUS)
+cm.lasso.min.5
+
+cm.tree.5 <- table(tree.predict.label, h1b.test$CASE_STATUS)
+cm.tree.5
+
+cm.rf.5 <- table(rf.predict.label, h1b.test$CASE_STATUS)
+cm.rf.5
+```
+
+
+**Appendix 3.4 Variable Importance Measure in Random Forests to predict H1B approval** 
+```{r echo=F}
+# Variable Importance Measure
+rf.imp <- randomForest::importance(fit.rf, type=2) # type2 to choose the mean gini index reduction
+rf.imp <- rf.imp[order(rf.imp, decreasing = T), ]
+varImpPlot(fit.rf, type=2)
+```
+
+
+**Appendix 3.5 Model diagonises for H1B Logistic**
+
+```{r echo=F}
+plot(fit.glm.3)
+```
+
+
+
